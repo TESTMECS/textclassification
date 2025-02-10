@@ -117,11 +117,9 @@ if __name__ == "__main__":
         regularization_strength=best_lambda,
     )
     mclr.fit(X_train, y_train)
-
     # Evaluate on validation set
     print("Validation set evaluation: 📊")
     mclr.evaluate(X_val, y_val)
-
     # Evaluate on test set
     print("Test set evaluation: 📊")
     mclr.evaluate(X_test, y_test)
