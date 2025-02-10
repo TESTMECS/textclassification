@@ -1,7 +1,7 @@
 from numpy._typing._array_like import NDArray
 from numpy import float64
 import numpy as np
-from data_preprocessing import SMSSpamPreprocessor
+from data_preprocessing import SMSSpamPreprocessor, TextPreprocessor
 from typing import Dict, Tuple
 
 
@@ -10,15 +10,16 @@ class LogisticRegression:
         self,
         learning_rate: float = 0.01,
         num_iterations: int = 1000,
+        regularization_strength: float = 0.05,
     ):
         """Initialize the Logistic Regression model with learning_rate and num_iterations."""
         self.learning_rate: float = learning_rate
         self.num_iterations: int = num_iterations
-        self.regularization_strength: float = 0.05
+        self.regularization_strength: float = regularization_strength
 
     # Sigmoid function
     def _sigmoid(self, z: np.float64) -> np.float64:
-        """Sigmoid function from example"""
+        """Sigmoid function from lecture code"""
         return 1 / (1 + np.exp(-z))
 
     def _cost(self, X, y, theta):
@@ -51,11 +52,15 @@ class LogisticRegression:
 
         for _ in range(self.num_iterations):
             h = self._sigmoid(np.dot(X, theta))
+            # compute gradient
             gradient = (np.dot(X.T, (h - y)) / m) + (
                 self.regularization_strength / m
             ) * np.r_[0, theta[1:]]
+            # update theta
             theta -= self.learning_rate * gradient
+            # compute cost
             cost = self._cost(X, y, theta)
+            # store cost
             cost_history.append(cost)
 
         return theta, cost_history
@@ -266,9 +271,11 @@ class LogisticRegression:
 
 
 if __name__ == "__main__":
-    # Load the dataset
+    # Example workflow
     data = SMSSpamPreprocessor("data/SMSSpamCollection")
-    split_data: Dict[str, Tuple[NDArray[np.float64], NDArray[np.float64]]] = data.get_data_splits()
+    split_data: Dict[str, Tuple[NDArray[np.float64], NDArray[np.float64]]] = (
+        data.get_data_splits()
+    )
     X_train, y_train = split_data["train"]
     X_val, y_val = split_data["val"]
     X_test, y_test = split_data["test"]
@@ -278,10 +285,23 @@ if __name__ == "__main__":
 
     lr = LogisticRegression(learning_rate=alpha, num_iterations=max_iter)
     w, b, cost_history = lr.fit(X_train, y_train)
+    # Custom Prediction
+
+    # Preprocess and predict custom sentence
+    custom_sentence = "Would you like to come to the movies?"
+    preprocessor = TextPreprocessor(data=[], labels=[])
+    preprocessor._vectorizer = data._vectorizer  # Use the same vectorizer
+    preprocessor._scaler = data._scaler  # Use the same scaler
+    preprocessed_sentence = preprocessor.preprocess_single_sentence(custom_sentence)
+    if lr.predict(preprocessed_sentence, w, b) == 1:
+        print("Spam!!")
+    else:
+        print("Not Spam")
+
     # Evaluate on validation set
     print("Validation set evaluation:")
-    lr.evaluate(X_val, y_val, w, b)
+    # lr.evaluate(X_val, y_val, w, b)
 
     # Evaluate on test set
     print("Test set evaluation:")
-    lr.evaluate(X_test, y_test, w, b)
+    # lr.evaluate(X_test, y_test, w, b)

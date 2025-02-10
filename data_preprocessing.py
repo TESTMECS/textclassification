@@ -35,10 +35,13 @@ class TextPreprocessor:
         val_size: float = 0.1,
     ):
         """Initialize the TextPreprocessor with data and labels."""
+        # Data and Labels
         self.data = data
         self.labels = labels
+        # Train and test sets
         self.test_size = test_size
         self.val_size = val_size
+        # Preprocessing
         self._vectorizer = TfidfVectorizer()
         self._stemmer = PorterStemmer()
         self._stop_words = stopwords.words("english")
@@ -53,7 +56,7 @@ class TextPreprocessor:
         df = self._preprocess_data(
             pd.DataFrame({"text": data_series, "label": labels_series})
         )
-
+        # Split
         X_train, X_val, X_test, y_train, y_val, y_test = (
             self._manual_train_val_test_split(
                 df["text_encoded"],
@@ -62,7 +65,7 @@ class TextPreprocessor:
                 val_size=self.val_size,
             )
         )
-
+        # Transform each into the right format for the model.
         train_df = pd.DataFrame(
             {"text_encoded": list(X_train), "label_encoded": y_train}
         )
@@ -78,12 +81,12 @@ class TextPreprocessor:
         X_test_imm: NDArray[np.float64] = np.vstack(
             test_df["text_encoded"].values.tolist()
         )
-        # Y
+        # Transform to 1d for later use.
         y_train: NDArray[np.float64] = train_df["label_encoded"].to_numpy().ravel()
         y_val: NDArray[np.float64] = val_df["label_encoded"].to_numpy().ravel()
         y_test: NDArray[np.float64] = test_df["label_encoded"].to_numpy().ravel()
-        # X
-        X_train: Any | NDArray[Any] = np.array(
+        # Final Transformation: Standard Scaling of text data
+        X_train: NDArray[np.float64] = np.array(
             self._scaler.fit_transform(X_train_imm)
         ).astype(np.float64)
         X_test: NDArray[np.float64] = np.array(
@@ -92,7 +95,7 @@ class TextPreprocessor:
         X_val: NDArray[np.float64] = np.array(self._scaler.transform(X_val_imm)).astype(
             np.float64
         )
-
+        # Return
         return {
             "train": (X_train, y_train),
             "val": (X_val, y_val),
@@ -102,6 +105,7 @@ class TextPreprocessor:
     def _manual_train_val_test_split(
         self, X, y, test_size=0.2, val_size=0.1
     ) -> Tuple[NDArray, NDArray, NDArray, NDArray, NDArray, NDArray]:
+        """Same as the lecture code, but also does val split"""
         num_data_points = X.shape[0]
         shuffled_indices = np.random.permutation(num_data_points)
         test_set_size = int(num_data_points * test_size)
@@ -129,10 +133,10 @@ class TextPreprocessor:
     def _preprocess_data(
         self, df: pd.DataFrame, text_column: str = "text"
     ) -> pd.DataFrame:
-        """Apply text cleaning, tokenization, stemming, and TF-IDF transformation."""
+        """Apply text cleaning, tokenization, stemming, and TF-IDF."""
         processed_df = df.copy()
-        processed_df[text_column] = self.tokenize_and_stem(
-            self.clean_text(processed_df[text_column])
+        processed_df[text_column] = self._tokenize_and_stem(
+            self._clean_text(processed_df[text_column])
         )
         processed_df["label_encoded"] = processed_df["label"].apply(
             lambda x: 1 if x == "spam" else 0
@@ -142,7 +146,7 @@ class TextPreprocessor:
         )
         return processed_df
 
-    def clean_text(self, text: Union[str, pd.Series]) -> Union[str, pd.Series]:
+    def _clean_text(self, text: Union[str, pd.Series]) -> Union[str, pd.Series]:
         """Remove punctuation, URLs, and numbers, and convert text to lowercase."""
         if isinstance(text, pd.Series):
             return text.apply(self._clean_single_text)
@@ -157,7 +161,7 @@ class TextPreprocessor:
         )  # Remove punctuation
         return text.lower()
 
-    def tokenize_and_stem(self, text: Union[str, pd.Series]) -> Union[str, pd.Series]:
+    def _tokenize_and_stem(self, text: Union[str, pd.Series]) -> Union[str, pd.Series]:
         """Tokenize text, remove stopwords, and apply stemming."""
         if isinstance(text, pd.Series):
             return text.apply(self._tokenize_and_stem_single)
@@ -175,11 +179,23 @@ class TextPreprocessor:
         self, df: pd.DataFrame, text_column: str = "text"
     ) -> List[np.ndarray]:
         """Fit the TF-IDF vectorizer and transform text data using TF-IDF."""
-        # Weird Errors
+        # Weird Type Errors /shrug
         return [
             np.array(arr)
             for arr in self._vectorizer.fit_transform(df[text_column].values).toarray()
         ]
+
+    def preprocess_single_sentence(self, sentence: str) -> NDArray[np.float64]:
+        """Preprocess a single sentence."""
+        cleaned_sentence = self._clean_single_text(sentence)
+        tokenized_sentence = self._tokenize_and_stem_single(cleaned_sentence)
+        tfidf_sentence = list(
+            self._vectorizer.transform([tokenized_sentence]).toarray()
+        )
+        scaled_sentence = np.array(self._scaler.transform(tfidf_sentence)).astype(
+            np.float64
+        )
+        return scaled_sentence
 
 
 class SMSSpamPreprocessor:
@@ -207,12 +223,15 @@ class SMSSpamPreprocessor:
         """Load the data from the file and split it into training, validation, and test sets."""
         sentences, labels = self.load_data_from_file(self.filepath)
         preprocessor = TextPreprocessor(data=sentences, labels=labels)
+        # Save for later usage
+        self._vectorizer = preprocessor._vectorizer
+        self._scaler = preprocessor._scaler
         return preprocessor.split_data()
 
 
 if __name__ == "__main__":
-    # Load the dataset
+    # Example Usage
     data = SMSSpamPreprocessor("data/SMSSpamCollection")
     split_data = data.get_data_splits()
-
+    # Print the shape of the training set
     print(split_data["train"][0].shape)
