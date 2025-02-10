@@ -1,0 +1,16 @@
+[project]
+name = "homework1-cs584-logistic-regression"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "nltk>=3.9.1",
+    "nptyping>=2.0.1",
+    "numpy>=2.2.2",
+    "numpy-typing>=1.1.1",
+    "pandas>=2.2.3",
+    "pandas-stubs>=2.2.3.241126",
+    "scikit-learn>=1.6.1",
+    "scipy-stubs>=1.15.1.0",
+]
