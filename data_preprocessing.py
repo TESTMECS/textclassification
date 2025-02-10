@@ -3,12 +3,12 @@ import string
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MaxAbsScaler
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 import nltk
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, issparse
 
 # Typing
 from numpy._typing._array_like import NDArray
@@ -33,6 +33,9 @@ class TextPreprocessor:
         labels: List[str],
         test_size: float = 0.2,
         val_size: float = 0.1,
+        scaler: Union[StandardScaler, MaxAbsScaler] = StandardScaler(
+            with_mean=False
+        ),  # For csr matrices
     ):
         """Initialize the TextPreprocessor with data and labels."""
         # Data and Labels
@@ -45,9 +48,9 @@ class TextPreprocessor:
         self._vectorizer = TfidfVectorizer()
         self._stemmer = PorterStemmer()
         self._stop_words = stopwords.words("english")
-        self._scaler = StandardScaler()
+        self._scaler = scaler
 
-    def split_data(self) -> Dict[str, Tuple[NDArray[np.float64], NDArray[np.float64]]]:
+    def split_data(self):
         """Apply preprocessing and split data into training, validation, and test sets."""
         # Initalize Data
         data_series = pd.Series(self.data, name="text")
@@ -72,35 +75,43 @@ class TextPreprocessor:
         val_df = pd.DataFrame({"text_encoded": list(X_val), "label_encoded": y_val})
         test_df = pd.DataFrame({"text_encoded": list(X_test), "label_encoded": y_test})
 
-        X_train_imm: NDArray[np.float64] = np.vstack(
-            train_df["text_encoded"].values.tolist()
+        X_train_imm: SparseMatrix = csr_matrix(
+            np.vstack(train_df["text_encoded"].values.tolist())
         )
-        X_val_imm: NDArray[np.float64] = np.vstack(
-            val_df["text_encoded"].values.tolist()
+        X_val_imm: SparseMatrix = csr_matrix(
+            np.vstack(val_df["text_encoded"].values.tolist())
         )
-        X_test_imm: NDArray[np.float64] = np.vstack(
-            test_df["text_encoded"].values.tolist()
+        X_test_imm: SparseMatrix = csr_matrix(
+            np.vstack(test_df["text_encoded"].values.tolist())
         )
         # Transform to 1d for later use.
         y_train: NDArray[np.float64] = train_df["label_encoded"].to_numpy().ravel()
         y_val: NDArray[np.float64] = val_df["label_encoded"].to_numpy().ravel()
         y_test: NDArray[np.float64] = test_df["label_encoded"].to_numpy().ravel()
-        # Final Transformation: Standard Scaling of text data
-        X_train: NDArray[np.float64] = np.array(
-            self._scaler.fit_transform(X_train_imm)
-        ).astype(np.float64)
-        X_test: NDArray[np.float64] = np.array(
-            self._scaler.transform(X_test_imm)
-        ).astype(np.float64)
-        X_val: NDArray[np.float64] = np.array(self._scaler.transform(X_val_imm)).astype(
-            np.float64
-        )
+        # Apply scaler
+        X_train, X_val, X_test = self.apply_scaler(X_train_imm, X_val_imm, X_test_imm)
         # Return
         return {
             "train": (X_train, y_train),
             "val": (X_val, y_val),
             "test": (X_test, y_test),
         }
+
+    def apply_scaler(
+        self, X_train: SparseMatrix, X_val: SparseMatrix, X_test: SparseMatrix
+    ):
+        """Apply the scaler to the training, validation, and test sets."""
+        self._scaler.partial_fit(X_train)
+
+        def transform_sparse(X):
+            """Apply the scaler to a sparse matrix."""
+            X_scaled = self._scaler.transform(X)
+            return X_scaled if not issparse(X_scaled) else X_scaled
+
+        X_train_scaled = transform_sparse(X_train)
+        X_val_scaled = transform_sparse(X_val)
+        X_test_scaled = transform_sparse(X_test)
+        return X_train_scaled, X_val_scaled, X_test_scaled
 
     def _manual_train_val_test_split(
         self, X, y, test_size=0.2, val_size=0.1
@@ -138,12 +149,14 @@ class TextPreprocessor:
         processed_df[text_column] = self._tokenize_and_stem(
             self._clean_text(processed_df[text_column])
         )
-        processed_df["label_encoded"] = processed_df["label"].apply(
-            lambda x: 1 if x == "spam" else 0
+        processed_df["label_encoded"] = (
+            processed_df["label"].astype("category").cat.codes
         )
+
         processed_df["text_encoded"] = list(
             self._fit_transform_data_tfidf(processed_df)
         )
+
         return processed_df
 
     def _clean_text(self, text: Union[str, pd.Series]) -> Union[str, pd.Series]:
@@ -223,6 +236,39 @@ class SMSSpamPreprocessor:
         """Load the data from the file and split it into training, validation, and test sets."""
         sentences, labels = self.load_data_from_file(self.filepath)
         preprocessor = TextPreprocessor(data=sentences, labels=labels)
+        # Save for later usage
+        self._vectorizer = preprocessor._vectorizer
+        self._scaler = preprocessor._scaler
+        return preprocessor.split_data()
+
+
+class BookPreprocessor:
+    """Loading data from the file and calling the TextPreprocessor to preprocess it."""
+
+    def __init__(self, filepath: str):
+        self.filepath = filepath
+
+    def load_data_from_file(self, filepath: str) -> Tuple[List[str], List[str]]:
+        """Load data from the file and return it as a list of sentences and labels."""
+        labels = []
+        sentences = []
+        with open(filepath, "r", encoding="utf-8") as file:
+            for line in file:
+                parts = line.strip().split("\t")
+                if len(parts) == 2:
+                    label, sentence = parts
+                    labels.append(label)
+                    sentences.append(sentence)
+        return sentences, labels
+
+    def get_data_splits(
+        self,
+    ) -> Dict[str, Tuple[NDArray[np.float64], NDArray[np.float64]]]:
+        """Load the data from the file and split it into training, validation, and test sets."""
+        sentences, labels = self.load_data_from_file(self.filepath)
+        preprocessor = TextPreprocessor(
+            data=sentences, labels=labels, scaler=MaxAbsScaler()
+        )
         # Save for later usage
         self._vectorizer = preprocessor._vectorizer
         self._scaler = preprocessor._scaler

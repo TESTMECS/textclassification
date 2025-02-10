@@ -1,16 +1,17 @@
 from numpy._typing._array_like import NDArray
 from numpy import float64
 import numpy as np
-from data_preprocessing import SMSSpamPreprocessor, TextPreprocessor
+from data_preprocessing import SMSSpamPreprocessor
 from typing import Dict, Tuple
-
+from sklearn.model_selection import KFold
+from scipy.sparse import csr_matrix, hstack
 
 class LogisticRegression:
     def __init__(
         self,
         learning_rate: float = 0.01,
         num_iterations: int = 1000,
-        regularization_strength: float = 0.05,
+        regularization_strength: float = 0.01,
     ):
         """Initialize the Logistic Regression model with learning_rate and num_iterations."""
         self.learning_rate: float = learning_rate
@@ -25,7 +26,7 @@ class LogisticRegression:
     def _cost(self, X, y, theta):
         """Log-loss function with L2 regularization"""
         m = len(y)
-        h = self._sigmoid(np.dot(X, theta))
+        h = self._sigmoid(X @ theta)
         epsilon = 1e-5
         regularization_term = (self.regularization_strength / (2 * m)) * np.sum(
             np.square(theta[1:])
@@ -39,7 +40,7 @@ class LogisticRegression:
         Perform batch gradient descent to learn theta with L2 regularization.
 
         Parameters:
-            X: numpy array of shape (m, n) - Input features
+            X: sparse matrix of shape (m, n) - Input features
             y: numpy array of shape (m,) - True labels (0 or 1)
             theta: numpy array of shape (n,) - Initial weight vector
 
@@ -51,11 +52,11 @@ class LogisticRegression:
         cost_history = []
 
         for _ in range(self.num_iterations):
-            h = self._sigmoid(np.dot(X, theta))
+            h = self._sigmoid(X @ theta)
             # compute gradient
-            gradient = (np.dot(X.T, (h - y)) / m) + (
-                self.regularization_strength / m
-            ) * np.r_[0, theta[1:]]
+            gradient = (X.T @ (h - y) / m) + (self.regularization_strength / m) * np.r_[
+                0, theta[1:]
+            ]
             # update theta
             theta -= self.learning_rate * gradient
             # compute cost
@@ -70,7 +71,7 @@ class LogisticRegression:
         Perform stochastic gradient descent to learn theta with L2 regularization.
 
         Parameters:
-            X: numpy array of shape (m, n) - Input features
+            X: sparse matrix of shape (m, n) - Input features
             y: numpy array of shape (m,) - True labels (0 or 1)
             theta: numpy array of shape (n,) - Initial weight vector
 
@@ -87,9 +88,9 @@ class LogisticRegression:
                 rand_index = np.random.randint(0, m)
                 X_i = X[rand_index, :].reshape(1, X.shape[1])
                 y_i = y[rand_index].reshape(1)
-                h = self._sigmoid(np.dot(X_i, theta))
+                h = self._sigmoid(X_i @ theta)
                 gradient = (
-                    np.dot(X_i.T, (h - y_i))
+                    X_i.T @ (h - y_i)
                     + (self.regularization_strength / m) * np.r_[0, theta[1:]]
                 )
                 theta -= self.learning_rate * gradient
@@ -103,7 +104,7 @@ class LogisticRegression:
         Perform mini-batch gradient descent to learn theta with L2 regularization.
 
         Parameters:
-            X: numpy array of shape (m, n) - Input features
+            X: sparse matrix of shape (m, n) - Input features
             y: numpy array of shape (m,) - True labels (0 or 1)
             theta: numpy array of shape (n,) - Initial weight vector
             batch_size: int - Size of each mini-batch
@@ -124,8 +125,8 @@ class LogisticRegression:
             for j in range(0, m, batch_size):
                 X_i = X_shuffled[j : j + batch_size]
                 y_i = y_shuffled[j : j + batch_size]
-                h = self._sigmoid(np.dot(X_i, theta))
-                gradient = (np.dot(X_i.T, (h - y_i)) / batch_size) + (
+                h = self._sigmoid(X_i @ theta)
+                gradient = (X_i.T @ (h - y_i) / batch_size) + (
                     self.regularization_strength / m
                 ) * np.r_[0, theta[1:]]
                 theta -= self.learning_rate * gradient
@@ -134,19 +135,19 @@ class LogisticRegression:
 
         return theta, cost_history
 
-    def predict(self, X_pred: NDArray, w: NDArray, b: float) -> NDArray[float64]:
+    def predict(self, X_pred: csr_matrix, w: NDArray, b: float) -> NDArray[float64]:
         """
         Predict the labels of the input features using the trained model.
 
         Parameters:
-            X: numpy array of shape (m, n) - Input features
+            X: sparse matrix of shape (m, n) - Input features
             w: numpy array of shape (n,) - Weight vector
             b: float - Bias term
 
         Returns:
             predictions: numpy array of shape (m,) - Predicted labels (0 or 1)
         """
-        z = np.dot(X_pred, w) + b
+        z = X_pred @ w + b
         h = self._sigmoid(z)
         predictions = np.where(h >= 0.5, 1, 0)
         return predictions
@@ -156,7 +157,7 @@ class LogisticRegression:
         Fit the logistic regression model to the training data.
 
         Parameters:
-            X: numpy array of shape (m, n) - Input features
+            X: sparse matrix of shape (m, n) - Input features
             y: numpy array of shape (m,) - True labels (0 or 1)
             method: str - Gradient descent method ('batch', 'stochastic', 'mini_batch')
             batch_size: int - Size of each mini-batch (used only for mini-batch gradient descent)
@@ -165,7 +166,7 @@ class LogisticRegression:
             w: numpy array of shape (n,) - Learned weight vector
             b: float - Learned bias term
         """
-        X: NDArray[float64] = np.column_stack([np.ones(X_train.shape[0]), X_train])
+        X = hstack([csr_matrix(np.ones((X_train.shape[0], 1))), X_train])
         theta = np.zeros(X.shape[1])
         cost_history = []
 
@@ -197,9 +198,7 @@ class LogisticRegression:
             precision: float - Precision score of the model
         """
         true_positives = np.sum((y_true == 1) & (y_pred == 1))
-        print(f"True Positives: {true_positives}")
         false_positives = np.sum((y_true == 0) & (y_pred == 1))
-        print(f"False Positives: {false_positives}")
         precision = true_positives / (true_positives + false_positives)
         return precision
 
@@ -238,7 +237,7 @@ class LogisticRegression:
         Evaluate the performance of the model on the test set.
 
         Parameters:
-            X: numpy array of shape (m, n) - Input features
+            X: sparse matrix of shape (m, n) - Input features
             y: numpy array of shape (m,) - True labels (0 or 1)
             w: numpy array of shape (n,) - Weight vector
             b: float - Bias term
@@ -249,7 +248,6 @@ class LogisticRegression:
         # Get predictions
         predictions: NDArray = self.predict(X_pred=X_test, w=w, b=b)
         # Compute accuracy
-        # Total Spam predictions (1)
         accuracy = np.mean(predictions == y) * 100
         print(f"Accuracy: {accuracy:.2f}%")
         # Compute precision
@@ -270,38 +268,81 @@ class LogisticRegression:
         }
 
 
+def cross_validate_lambda(X_train, y_train, lambdas, k=5):
+    """
+    Perform k-fold cross-validation to select the best lambda (regularization strength).
+
+    Parameters:
+        X_train: sparse matrix of shape (m, n) - Input features for training
+        y_train: numpy array of shape (m,) - True labels for training
+        lambdas: list of float - List of lambda values to test
+        k: int - Number of folds for cross-validation
+
+    Returns:
+        best_lambda: float - The lambda value that resulted in the best average performance
+    """
+    best_lambda = None
+    best_score = -np.inf
+
+    kf = KFold(n_splits=k, shuffle=True, random_state=42)
+
+    for lambda_value in lambdas:
+        scores = []
+
+        for train_index, val_index in kf.split(X_train):
+            X_tr, X_val = X_train[train_index], X_train[val_index]
+            y_tr, y_val = y_train[train_index], y_train[val_index]
+
+            alpha = 0.01
+            max_iter = 1000
+
+            lr = LogisticRegression(
+                learning_rate=alpha,
+                num_iterations=max_iter,
+                regularization_strength=lambda_value,
+            )
+            w, b, _ = lr.fit(X_tr, y_tr)
+
+            metrics = lr.evaluate(X_val, y_val, w, b)
+            scores.append(metrics["f1_score"])
+
+        avg_score = np.mean(scores)
+        print(f"Lambda: {lambda_value}, Average F1 Score: {avg_score:.2f}")
+
+        if avg_score > best_score:
+            best_score = avg_score
+            best_lambda = lambda_value
+
+    return best_lambda
+
+
 if __name__ == "__main__":
     # Example workflow
     data = SMSSpamPreprocessor("data/SMSSpamCollection")
-    split_data: Dict[str, Tuple[NDArray[np.float64], NDArray[np.float64]]] = (
-        data.get_data_splits()
-    )
+    split_data = data.get_data_splits()
+
     X_train, y_train = split_data["train"]
     X_val, y_val = split_data["val"]
     X_test, y_test = split_data["test"]
 
-    alpha = 1e-2
-    max_iter = 1000
+    # Define range of lambda values to test
+    lambdas = [0.01, 0.05, 0.1, 0.5, 1.0]
 
-    lr = LogisticRegression(learning_rate=alpha, num_iterations=max_iter)
+    # Perform cross-validation to select the best lambda
+    best_lambda = cross_validate_lambda(X_train, y_train, lambdas)
+    print(f"Best Lambda: {best_lambda}")
+
+    alpha = 0.01
+    max_iter = 100
+
+    # Train final model with the best lambda
+    lr = LogisticRegression(learning_rate=alpha, num_iterations=max_iter, regularization_strength=best_lambda)
     w, b, cost_history = lr.fit(X_train, y_train)
-    # Custom Prediction
-
-    # Preprocess and predict custom sentence
-    custom_sentence = "Would you like to come to the movies?"
-    preprocessor = TextPreprocessor(data=[], labels=[])
-    preprocessor._vectorizer = data._vectorizer  # Use the same vectorizer
-    preprocessor._scaler = data._scaler  # Use the same scaler
-    preprocessed_sentence = preprocessor.preprocess_single_sentence(custom_sentence)
-    if lr.predict(preprocessed_sentence, w, b) == 1:
-        print("Spam!!")
-    else:
-        print("Not Spam")
 
     # Evaluate on validation set
     print("Validation set evaluation:")
-    # lr.evaluate(X_val, y_val, w, b)
+    lr.evaluate(X_val, y_val, w, b)
 
     # Evaluate on test set
     print("Test set evaluation:")
-    # lr.evaluate(X_test, y_test, w, b)
+    lr.evaluate(X_test, y_test, w, b)
