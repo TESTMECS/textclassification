@@ -10,9 +10,12 @@ from nltk.stem import PorterStemmer
 import nltk
 from scipy.sparse import csr_matrix, issparse
 
+import seaborn as sns
+import matplotlib.pyplot as plt
+
 # Typing
 from numpy._typing._array_like import NDArray
-from typing import Any, Tuple, Dict, Union, List
+from typing import Any, Tuple, Dict, TypeAlias, Union, List
 from numpy._typing import NDArray
 
 # Download NLTK data
@@ -23,7 +26,7 @@ nltk.download("stopwords")
 np.random.seed(seed=420)
 
 # Define type alias for sparse matrix
-SparseMatrix = csr_matrix
+SparseMatrix: TypeAlias = csr_matrix
 
 
 class TextPreprocessor:
@@ -33,9 +36,8 @@ class TextPreprocessor:
         labels: List[str],
         test_size: float = 0.2,
         val_size: float = 0.1,
-        scaler: Union[StandardScaler, MaxAbsScaler] = StandardScaler(
-            with_mean=False
-        ),  # For csr matrices
+        scaler=StandardScaler(with_mean=False),
+        report: bool = False,
     ):
         """Initialize the TextPreprocessor with data and labels."""
         # Data and Labels
@@ -49,17 +51,43 @@ class TextPreprocessor:
         self._stemmer = PorterStemmer()
         self._stop_words = stopwords.words("english")
         self._scaler = scaler
+        # Report
+        self.report = report
 
-    def split_data(self):
+    def _report_data_distribution(self, _data, labels: pd.Series):
+        """If Report, plot the data distribution in a table."""
+        counts = labels.value_counts()
+        # Use Histogram
+        plt.figure(figsize=(10, 5))
+        sns.histplot(labels, bins=20)
+        plt.title("Data Distribution")
+        plt.xlabel("Labels")
+        plt.ylabel("Count")
+        plt.show()
+        # Pie
+        labels_list = ["ham", "spam"]
+        plt.figure(figsize=(10, 5))
+        plt.pie(
+            counts, labels=labels_list, autopct="%1.1f%%", colors=["lightblue", "blue"]
+        )
+        plt.title("Data Distribution")
+        plt.show()
+
+    def split_data(
+        self,
+    ) -> Dict[str, Tuple[SparseMatrix, NDArray[np.float64]]]:
         """Apply preprocessing and split data into training, validation, and test sets."""
         # Initalize Data
         data_series = pd.Series(self.data, name="text")
         labels_series = pd.Series(self.labels, name="label")
+        # Report Data Distribution
+        if self.report:
+            self._report_data_distribution(data_series, labels_series)
         # Preprocess Data
         df = self._preprocess_data(
             pd.DataFrame({"text": data_series, "label": labels_series})
         )
-        # Split
+        # Split into Train and Test Split.
         X_train, X_val, X_test, y_train, y_val, y_test = (
             self._manual_train_val_test_split(
                 df["text_encoded"],
@@ -89,7 +117,7 @@ class TextPreprocessor:
         y_val: NDArray[np.float64] = val_df["label_encoded"].to_numpy().ravel()
         y_test: NDArray[np.float64] = test_df["label_encoded"].to_numpy().ravel()
         # Apply scaler
-        X_train, X_val, X_test = self.apply_scaler(X_train_imm, X_val_imm, X_test_imm)
+        X_train, X_val, X_test = self._apply_scaler(X_train_imm, X_val_imm, X_test_imm)
         # Return
         return {
             "train": (X_train, y_train),
@@ -97,9 +125,9 @@ class TextPreprocessor:
             "test": (X_test, y_test),
         }
 
-    def apply_scaler(
+    def _apply_scaler(
         self, X_train: SparseMatrix, X_val: SparseMatrix, X_test: SparseMatrix
-    ):
+    ) -> Tuple[SparseMatrix, SparseMatrix, SparseMatrix]:
         """Apply the scaler to the training, validation, and test sets."""
         self._scaler.partial_fit(X_train)
 
@@ -108,9 +136,9 @@ class TextPreprocessor:
             X_scaled = self._scaler.transform(X)
             return X_scaled if not issparse(X_scaled) else X_scaled
 
-        X_train_scaled = transform_sparse(X_train)
-        X_val_scaled = transform_sparse(X_val)
-        X_test_scaled = transform_sparse(X_test)
+        X_train_scaled = SparseMatrix(transform_sparse(X_train))
+        X_val_scaled = SparseMatrix(transform_sparse(X_val))
+        X_test_scaled = SparseMatrix(transform_sparse(X_test))
         return X_train_scaled, X_val_scaled, X_test_scaled
 
     def _manual_train_val_test_split(
@@ -146,13 +174,15 @@ class TextPreprocessor:
     ) -> pd.DataFrame:
         """Apply text cleaning, tokenization, stemming, and TF-IDF."""
         processed_df = df.copy()
+        # Tokenize and stem
         processed_df[text_column] = self._tokenize_and_stem(
             self._clean_text(processed_df[text_column])
         )
+        # Encode labels
         processed_df["label_encoded"] = (
             processed_df["label"].astype("category").cat.codes
         )
-
+        # Apply TF-IDF
         processed_df["text_encoded"] = list(
             self._fit_transform_data_tfidf(processed_df)
         )
@@ -167,6 +197,7 @@ class TextPreprocessor:
 
     def _clean_single_text(self, text: str) -> str:
         """Clean a single text string."""
+        text = text.strip()
         text = re.sub(r"http\S+|www\S+", "", text)  # Remove URLs
         text = re.sub(r"\d+", "", text)  # Remove numbers
         text = text.translate(
@@ -198,24 +229,23 @@ class TextPreprocessor:
             for arr in self._vectorizer.fit_transform(df[text_column].values).toarray()
         ]
 
-    def preprocess_single_sentence(self, sentence: str) -> NDArray[np.float64]:
+    def preprocess_single_sentence(self, sentence: str) -> SparseMatrix:
         """Preprocess a single sentence."""
         cleaned_sentence = self._clean_single_text(sentence)
         tokenized_sentence = self._tokenize_and_stem_single(cleaned_sentence)
         tfidf_sentence = list(
             self._vectorizer.transform([tokenized_sentence]).toarray()
         )
-        scaled_sentence = np.array(self._scaler.transform(tfidf_sentence)).astype(
-            np.float64
-        )
+        scaled_sentence = SparseMatrix(self._scaler.transform(tfidf_sentence))
         return scaled_sentence
 
 
 class SMSSpamPreprocessor:
     """Loading data from the file and calling the TextPreprocessor to preprocess it."""
 
-    def __init__(self, filepath: str):
-        self.filepath = filepath
+    def __init__(self, report: bool = False):
+        self.filepath = "data/SMSSpamCollection"
+        self.report = report
 
     def load_data_from_file(self, filepath: str) -> Tuple[List[str], List[str]]:
         """Load data from the file and return it as a list of sentences and labels."""
@@ -232,26 +262,34 @@ class SMSSpamPreprocessor:
 
     def get_data_splits(
         self,
-    ) -> Dict[str, Tuple[NDArray[np.float64], NDArray[np.float64]]]:
+    ) -> Dict[str, Tuple[SparseMatrix, NDArray[np.float64]]]:
         """Load the data from the file and split it into training, validation, and test sets."""
         sentences, labels = self.load_data_from_file(self.filepath)
-        preprocessor = TextPreprocessor(data=sentences, labels=labels)
+        print(
+            f"📬 Loaded SMS Spam data 📬 from file. With \n {len(sentences)} sentences and \n {len(labels)} labels "
+        )
+        self.preprocessor = TextPreprocessor(
+            data=sentences, labels=labels, report=self.report
+        )
         # Save for later usage
-        self._vectorizer = preprocessor._vectorizer
-        self._scaler = preprocessor._scaler
-        return preprocessor.split_data()
+        return self.preprocessor.split_data()
+
+    def preprocess_single_sentence(self, sentence: str) -> SparseMatrix:
+        """Preprocess a single sentence."""
+        return self.preprocessor.preprocess_single_sentence(sentence)
 
 
 class BookPreprocessor:
     """Loading data from the file and calling the TextPreprocessor to preprocess it."""
 
-    def __init__(self, filepath: str):
-        self.filepath = filepath
+    def __init__(self, report: bool = False):
+        self.filepath = "data/books.txt"
+        self.report = report
 
     def load_data_from_file(self, filepath: str) -> Tuple[List[str], List[str]]:
         """Load data from the file and return it as a list of sentences and labels."""
-        labels = []
-        sentences = []
+        labels: list[Any] = []
+        sentences: list[Any] = []
         with open(filepath, "r", encoding="utf-8") as file:
             for line in file:
                 parts = line.strip().split("\t")
@@ -259,25 +297,28 @@ class BookPreprocessor:
                     label, sentence = parts
                     labels.append(label)
                     sentences.append(sentence)
+
         return sentences, labels
 
     def get_data_splits(
         self,
-    ) -> Dict[str, Tuple[NDArray[np.float64], NDArray[np.float64]]]:
+    ) -> Dict[str, Tuple[SparseMatrix, NDArray[np.float64]]]:
         """Load the data from the file and split it into training, validation, and test sets."""
         sentences, labels = self.load_data_from_file(self.filepath)
-        preprocessor = TextPreprocessor(
-            data=sentences, labels=labels, scaler=MaxAbsScaler()
+        print(
+            f"📬 Loaded Book data 📬 from file. With \n {len(sentences)} sentences and \n {len(labels)} labels "
         )
-        # Save for later usage
-        self._vectorizer = preprocessor._vectorizer
-        self._scaler = preprocessor._scaler
-        return preprocessor.split_data()
+        print(f"Unique Labels: {set(labels)}")
+        self.preprocessor = TextPreprocessor(
+            data=sentences, labels=labels, scaler=StandardScaler(with_mean=False)
+        )
+        return self.preprocessor.split_data()
+
+    def preprocess_single_sentence(self, sentence: str) -> SparseMatrix:
+        """Preprocess a single sentence."""
+        return self.preprocessor.preprocess_single_sentence(sentence)
 
 
 if __name__ == "__main__":
-    # Example Usage
-    data = SMSSpamPreprocessor("data/SMSSpamCollection")
+    data = SMSSpamPreprocessor()
     split_data = data.get_data_splits()
-    # Print the shape of the training set
-    print(split_data["train"][0].shape)
