@@ -1,4 +1,4 @@
-# Homework 1 - Text Classification. 
+# Homework 1 - Text Classification CS584
 
 - Implemented EDA for the SMSSpamCollection DataSet and Books.txt including:
   - Manual Train Test Split
